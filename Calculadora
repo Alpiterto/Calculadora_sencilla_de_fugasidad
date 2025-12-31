@@ -1,0 +1,216 @@
+import numpy as np
+import customtkinter as ctk
+from tkinter import messagebox
+
+# ===================================================================
+# LÓGICA DE CÁLCULO 
+# ===================================================================
+
+R_SI = 8.31446  # J/(mol·K) o Pa·m³/(mol·K)
+
+pure_props = {
+    1: { # Metano
+        'omega': 0.012, 'Tc': 190.6, 'Pc': 45.99 * 1e5, 'Zc': 0.286, 'Vc': 98.6 / 1e6
+    },
+    2: { # Propileno
+        'omega': 0.140, 'Tc': 365.6, 'Pc': 46.65 * 1e5, 'Zc': 0.289, 'Vc': 188.4 / 1e6
+    },
+    3: { # Agua
+        'omega': 0.345, 'Tc': 647.1, 'Pc': 220.55 * 1e5, 'Zc': 0.229, 'Vc': 55.9 / 1e6
+    }
+}
+NC = len(pure_props)
+
+def get_B0(Tr): return 0.083 - 0.422 / (Tr**1.6)
+def get_B1(Tr): return 0.139 - 0.172 / (Tr**4.2)
+def get_Tcij(Tc_i, Tc_j): return (Tc_i * Tc_j)**0.5
+def get_omegaij(omega_i, omega_j): return (omega_i + omega_j) / 2.0
+def get_Zcij(Zc_i, Zc_j): return (Zc_i + Zc_j) / 2.0
+def get_Vcij(Vc_i, Vc_j): return ((Vc_i**(1/3) + Vc_j**(1/3)) / 2.0)**3
+def get_Pcij(Tcij, Vcij, Zcij): return Zcij * R_SI * Tcij / Vcij
+
+def calculate_fugacity(T_C, P_bar, y_array):
+    T_K = T_C + 273.15
+    P_Pa = P_bar * 1e5
+    B_matrix = np.zeros((NC, NC))
+    for i in range(NC):
+        for j in range(i, NC):
+            idx_i, idx_j = i + 1, j + 1
+            props_i, props_j = pure_props[idx_i], pure_props[idx_j]
+            omega_ij = get_omegaij(props_i['omega'], props_j['omega'])
+            Tc_ij = get_Tcij(props_i['Tc'], props_j['Tc'])
+            Zc_ij = get_Zcij(props_i['Zc'], props_j['Zc'])
+            Vc_ij = get_Vcij(props_i['Vc'], props_j['Vc'])
+            Pc_ij = get_Pcij(Tc_ij, Vc_ij, Zc_ij) 
+            Tr_ij = T_K / Tc_ij
+            B0, B1 = get_B0(Tr_ij), get_B1(Tr_ij)
+            B_ij = (R_SI * Tc_ij / Pc_ij) * (B0 + omega_ij * B1)
+            B_matrix[i, j] = B_matrix[j, i] = B_ij
+
+    delta_matrix = np.zeros((NC, NC))
+    for i in range(NC):
+        for k in range(NC):
+            delta_matrix[i, k] = 2 * B_matrix[i, k] - B_matrix[i, i] - B_matrix[k, k]
+
+    ln_phi_array = np.zeros(NC)
+    P_div_RT = P_Pa / (R_SI * T_K)
+    for k in range(NC):
+        B_kk = B_matrix[k, k]
+        double_sum = 0.0
+        for i in range(NC):
+            for j in range(NC):
+                term = (2 * delta_matrix[i, k] - delta_matrix[i, j])
+                double_sum += y_array[i] * y_array[j] * term
+        ln_phi_array[k] = P_div_RT * (B_kk + 0.5 * double_sum)
+    
+    phi_array = np.exp(ln_phi_array)
+    fugacity_array = y_array * phi_array * P_bar
+    return phi_array, fugacity_array
+
+# ===================================================================
+# INTERFAZ GRÁFICA (GUI) con CustomTkinter
+# ===================================================================
+
+ctk.set_appearance_mode("Light")
+ctk.set_default_color_theme("blue")
+
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+
+        self.title("Calculadora de Fugacidades para la mezcla de gases")
+        self.geometry("750x450")
+
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
+
+        # --- Frame Izquierdo (Entradas) ---
+        self.left_frame = ctk.CTkFrame(self, width=280, corner_radius=10)
+        self.left_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        self.left_frame.grid_propagate(False)
+
+        self.frame_title = ctk.CTkLabel(self.left_frame, text="Parámetros de Entrada", font=ctk.CTkFont(size=16, weight="bold"))
+        self.frame_title.pack(pady=(20, 15))
+
+        self.entries_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
+        self.entries_frame.pack(fill="x", padx=20)
+        self.entries_frame.grid_columnconfigure(1, weight=1)
+
+        self.temp_label = ctk.CTkLabel(self.entries_frame, text="Temperatura (°C):")
+        self.temp_label.grid(row=0, column=0, pady=(5, 10), sticky="w")
+        self.temp_entry = ctk.CTkEntry(self.entries_frame)
+        self.temp_entry.grid(row=0, column=1, pady=(5, 10), padx=(10, 0), sticky="ew")
+        self.temp_entry.insert(0, "250.0")
+
+        self.pressure_label = ctk.CTkLabel(self.entries_frame, text="Presión (bar):")
+        self.pressure_label.grid(row=1, column=0, pady=(5, 10), sticky="w")
+        self.pressure_entry = ctk.CTkEntry(self.entries_frame)
+        self.pressure_entry.grid(row=1, column=1, pady=(5, 10), padx=(10, 0), sticky="ew")
+        self.pressure_entry.insert(0, "25.0")
+        
+        self.y1_label = ctk.CTkLabel(self.entries_frame, text="y₁ (Metano):")
+        self.y1_label.grid(row=2, column=0, pady=(15, 10), sticky="w")
+        self.y1_entry = ctk.CTkEntry(self.entries_frame)
+        self.y1_entry.grid(row=2, column=1, pady=(15, 10), padx=(10, 0), sticky="ew")
+        self.y1_entry.insert(0, "0.4")
+
+        self.y2_label = ctk.CTkLabel(self.entries_frame, text="y₂ (Propileno):")
+        self.y2_label.grid(row=3, column=0, pady=(5, 10), sticky="w")
+        self.y2_entry = ctk.CTkEntry(self.entries_frame)
+        self.y2_entry.grid(row=3, column=1, pady=(5, 10), padx=(10, 0), sticky="ew")
+        self.y2_entry.insert(0, "0.3")
+
+        self.y3_label = ctk.CTkLabel(self.entries_frame, text="y₃ (Agua):")
+        self.y3_label.grid(row=4, column=0, pady=(5, 10), sticky="w")
+        self.y3_entry = ctk.CTkEntry(self.entries_frame)
+        self.y3_entry.grid(row=4, column=1, pady=(5, 10), padx=(10, 0), sticky="ew")
+        self.y3_entry.insert(0, "0.3")
+
+        self.calculate_button = ctk.CTkButton(self.left_frame, text="Calcular Fugacidades", command=self.run_calculation)
+        self.calculate_button.pack(side="bottom", fill="x", padx=20, pady=20)
+
+
+        # --- Frame Derecho (Resultados) ---
+        self.right_frame = ctk.CTkFrame(self, corner_radius=10)
+        self.right_frame.grid(row=0, column=1, padx=(0, 10), pady=10, sticky="nsew")
+        self.right_frame.grid_rowconfigure(1, weight=1)
+        self.right_frame.grid_columnconfigure(0, weight=1)
+
+        self.results_title = ctk.CTkLabel(self.right_frame, text="Resultados del Cálculo", font=ctk.CTkFont(size=16, weight="bold"))
+        self.results_title.grid(row=0, column=0, padx=20, pady=(20, 10))
+
+        self.output_textbox = ctk.CTkTextbox(self.right_frame, wrap="none", font=ctk.CTkFont(family="Consolas", size=13))
+        self.output_textbox.grid(row=1, column=0, padx=20, pady=(0, 20), sticky="nsew")
+        self.output_textbox.insert("1.0", "Presiona 'Calcular' para ver los resultados...")
+        self.output_textbox.configure(state="disabled")
+
+
+    def run_calculation(self):
+        try:
+            T_C = float(self.temp_entry.get())
+            P_bar = float(self.pressure_entry.get())
+            y1 = float(self.y1_entry.get())
+            y2 = float(self.y2_entry.get())
+            y3 = float(self.y3_entry.get())
+
+            y_array = np.array([y1, y2, y3])
+            
+            # --- VALIDACIÓN ESTRICTA
+            total_y = np.sum(y_array)
+            if not np.isclose(total_y, 1.0):
+                messagebox.showerror("Error de Fracciones", 
+                                     f"La suma de las fracciones molares debe ser 1.0.\n\n"
+                                     f"Suma actual: {total_y:.4f}")
+                return # Detiene la ejecución
+            # ----------------------------------------
+
+            phi_array, fugacity_array = calculate_fugacity(T_C, P_bar, y_array)
+
+            # --- Formato de tabla con bordes 
+            output_string = "" 
+            
+            # Definir anchos de columna 
+            c1_width = 16 # Componente
+            c2_width = 13 # phi
+            c3_width = 16 # f (bar)
+            
+            # Crear líneas horizontales
+            h1 = '═' * c1_width
+            h2 = '═' * c2_width
+            h3 = '═' * c3_width
+
+            # Borde superior
+            output_string += f"╔{h1}╦{h2}╦{h3}╗\n"
+            
+            # Encabezado (Centrado)
+            output_string += f"║{'Componente':^{c1_width}}║{'φi':^{c2_width}}║{'fi (bar)':^{c3_width}}║\n"
+
+            # Línea separadora
+            output_string += f"╠{h1}╬{h2}╬{h3}╣\n"
+
+            names = ["Metano", "Propileno", "Agua"]
+            for k in range(NC):
+                # Datos: Nombre a la izquierda, números a la derecha
+                name_str = f" {names[k]:<{c1_width-1}}"
+                phi_str = f"{phi_array[k]:>{c2_width-2}.4f}  " # Redondeo a 4 decimales
+                f_str = f"{fugacity_array[k]:>{c3_width-2}.4f}  " # Redondeo a 4 decimales
+                output_string += f"║{name_str}║{phi_str}║{f_str}║\n"
+            
+            # Borde inferior
+            output_string += f"╚{h1}╩{h2}╩{h3}╝\n"
+            # ----------------------------------------------------
+
+            self.output_textbox.configure(state="normal")
+            self.output_textbox.delete("1.0", "end")
+            self.output_textbox.insert("1.0", output_string)
+            self.output_textbox.configure(state="disabled")
+
+        except ValueError:
+            messagebox.showerror("Error de Entrada", "Por favor, introduce valores numéricos válidos.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Ocurrió un error inesperado: {e}")
+
+# --- Ejecutar la aplicación ---
+if __name__ == "__main__":
+    app = App()
+    app.mainloop()
