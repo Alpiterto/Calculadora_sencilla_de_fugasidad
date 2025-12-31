@@ -65,8 +65,10 @@ El código está preconfigurado para el siguiente sistema:
 
 ## 🖼️ Preview
 
-*(Add a screenshot of your app here)*
+*(<img width="1365" height="732" alt="image" src="https://github.com/user-attachments/assets/42807bf6-27f8-4b17-86a0-4179638c930f" />
+)(<img width="1365" height="456" alt="image" src="https://github.com/user-attachments/assets/f234bdbe-1169-429a-93c8-a221f580b79b" />
+)*
 
 ---
 
-**Author:** [Tu Nombre]
+**Author:** [Angel Torres ]
